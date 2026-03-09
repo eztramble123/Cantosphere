@@ -1,0 +1,451 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth & Users ────────────────────────────────────────
+
+enum UserRole {
+  VALIDATOR
+  DEVELOPER
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  username      String?   @unique
+  role          UserRole  @default(VALIDATOR)
+  bio           String?
+  company       String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  apps          App[]           @relation("DeveloperApps")
+  reviews       Review[]
+  nodes         ValidatorNode[]
+  installations Installation[]
+  providerListings  AppListing[]       @relation("ProviderListings")
+  licenses          License[]          @relation("UserLicenses")
+  installRequests   InstallRequest[]   @relation("UserInstallRequests")
+
+  @@map("users")
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── App Catalog ─────────────────────────────────────────
+
+enum AppStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  REJECTED
+  ARCHIVED
+}
+
+model App {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String
+  longDescription String?
+  icon        String?
+  license     String?
+  repoUrl     String?
+  websiteUrl  String?
+  status          AppStatus @default(DRAFT)
+  rejectionReason String?
+  featured        Boolean   @default(false)
+  developerId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  developer     User           @relation("DeveloperApps", fields: [developerId], references: [id])
+  versions      AppVersion[]
+  reviews       Review[]
+  installations Installation[]
+  categories    AppCategory[]
+  tags          AppTag[]
+  listing       AppListing?
+
+  @@index([status])
+  @@index([developerId])
+  @@map("apps")
+}
+
+model AppVersion {
+  id            String   @id @default(cuid())
+  appId         String
+  version       String
+  changelog     String?
+  darFileKey    String
+  darFileHash   String
+  darFileSize   Int
+  mainPackageId String?
+  sdkVersion    String?
+  isLatest      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  app             App              @relation(fields: [appId], references: [id], onDelete: Cascade)
+  packages        DarPackage[]
+  deployments     Deployment[]
+  installRequests InstallRequest[]
+  installations   Installation[]
+
+  @@unique([appId, version])
+  @@index([appId])
+  @@map("app_versions")
+}
+
+model DarPackage {
+  id          String @id @default(cuid())
+  versionId   String
+  packageId   String
+  packageName String?
+  lfVersion   String?
+
+  version AppVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, packageId])
+  @@index([packageId])
+  @@map("dar_packages")
+}
+
+// ─── Categories & Tags ───────────────────────────────────
+
+model Category {
+  id          String @id @default(cuid())
+  name        String @unique
+  slug        String @unique
+  description String?
+  icon        String?
+
+  apps AppCategory[]
+
+  @@map("categories")
+}
+
+model AppCategory {
+  appId      String
+  categoryId String
+
+  app      App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([appId, categoryId])
+  @@map("app_categories")
+}
+
+model Tag {
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
+
+  apps AppTag[]
+
+  @@map("tags")
+}
+
+model AppTag {
+  appId String
+  tagId String
+
+  app App @relation(fields: [appId], references: [id], onDelete: Cascade)
+  tag Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([appId, tagId])
+  @@map("app_tags")
+}
+
+// ─── Validator Infrastructure ────────────────────────────
+
+enum NodeHealthStatus {
+  UNKNOWN
+  HEALTHY
+  UNHEALTHY
+  UNREACHABLE
+}
+
+model ValidatorNode {
+  id              String           @id @default(cuid())
+  ownerId         String
+  name            String
+  host            String
+  port            Int              @default(5002)
+  useTls          Boolean          @default(false)
+  participantId   String?
+  synchronizerId  String?
+  healthStatus    NodeHealthStatus @default(UNKNOWN)
+  lastHealthCheck DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  deployments     Deployment[]
+  installRequests InstallRequest[]
+  installations   Installation[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@map("validator_nodes")
+}
+
+// ─── Installations & Deployments ─────────────────────────
+
+model Installation {
+  id        String      @id @default(cuid())
+  userId    String
+  appId     String
+  nodeId    String?
+  versionId String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  app     App            @relation(fields: [appId], references: [id], onDelete: Cascade)
+  node    ValidatorNode? @relation(fields: [nodeId], references: [id])
+  version AppVersion?    @relation(fields: [versionId], references: [id])
+
+  @@unique([userId, appId])
+  @@map("installations")
+}
+
+enum DeploymentStatus {
+  PENDING
+  UPLOADING
+  VETTING
+  VERIFYING
+  COMPLETED
+  FAILED
+}
+
+model Deployment {
+  id          String           @id @default(cuid())
+  nodeId      String
+  versionId   String
+  status      DeploymentStatus @default(PENDING)
+  errorMessage String?
+  startedAt   DateTime         @default(now())
+  completedAt DateTime?
+
+  node    ValidatorNode    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  version AppVersion       @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  steps   DeploymentStep[]
+
+  @@index([nodeId])
+  @@index([versionId])
+  @@map("deployments")
+}
+
+enum DeploymentStepName {
+  VALIDATE_DAR
+  CHECK_DEPENDENCIES
+  UPLOAD_DAR
+  VET_PACKAGES
+  VERIFY_DEPLOYMENT
+}
+
+enum StepStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model DeploymentStep {
+  id           String             @id @default(cuid())
+  deploymentId String
+  step         DeploymentStepName
+  status       StepStatus         @default(PENDING)
+  message      String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  deployment Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@unique([deploymentId, step])
+  @@map("deployment_steps")
+}
+
+// ─── Community ───────────────────────────────────────────
+
+model Review {
+  id        String   @id @default(cuid())
+  appId     String
+  userId    String
+  rating    Int
+  title     String?
+  body      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  app  App  @relation(fields: [appId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, userId])
+  @@index([appId])
+  @@map("reviews")
+}
+
+// ─── Marketplace ────────────────────────────────────────
+
+enum PricingModel {
+  FREE
+  ONE_TIME
+  SUBSCRIPTION
+  USAGE_BASED
+}
+
+enum ListingStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  SUSPENDED
+}
+
+enum InstallRequestStatus {
+  PENDING
+  PROVISIONING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model AppListing {
+  id                String        @id @default(cuid())
+  appId             String        @unique
+  providerId        String
+  pricingModel      PricingModel  @default(FREE)
+  priceAmount       Decimal?      @db.Decimal(18, 8)
+  priceCurrency     String?       @default("USD")
+  billingPeriodDays Int?
+  usageUnit         String?
+  usageRate         Decimal?      @db.Decimal(18, 8)
+  listingStatus     ListingStatus @default(PENDING)
+  darHash           String
+  supportEmail      String?
+  supportUrl        String?
+  providerHeartbeat DateTime?
+  onChainContractId String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  app             App              @relation(fields: [appId], references: [id], onDelete: Cascade)
+  provider        User             @relation("ProviderListings", fields: [providerId], references: [id])
+  licenses        License[]
+  installRequests InstallRequest[]
+
+  @@index([providerId])
+  @@index([listingStatus])
+  @@map("app_listings")
+}
+
+model License {
+  id                String        @id @default(cuid())
+  listingId         String
+  licenseeId        String
+  pricingModel      PricingModel
+  status            LicenseStatus @default(ACTIVE)
+  grantedAt         DateTime      @default(now())
+  expiresAt         DateTime?
+  lastRenewalAt     DateTime?
+  nextRenewalAt     DateTime?
+  usageCount        Int           @default(0)
+  usageLimit        Int?
+  amountPaid        Decimal?      @db.Decimal(18, 8)
+  paymentRef        String?
+  onChainContractId String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  listing  AppListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  licensee User       @relation("UserLicenses", fields: [licenseeId], references: [id])
+
+  @@unique([listingId, licenseeId])
+  @@index([licenseeId])
+  @@index([status])
+  @@map("licenses")
+}
+
+model InstallRequest {
+  id                String               @id @default(cuid())
+  listingId         String
+  requesterId       String
+  nodeId            String
+  versionId         String
+  status            InstallRequestStatus @default(PENDING)
+  statusMessage     String?
+  licenseId         String?
+  deploymentId      String?
+  onChainContractId String?
+  requestedAt       DateTime             @default(now())
+  completedAt       DateTime?
+
+  listing   AppListing    @relation(fields: [listingId], references: [id])
+  requester User          @relation("UserInstallRequests", fields: [requesterId], references: [id])
+  node      ValidatorNode @relation(fields: [nodeId], references: [id])
+  version   AppVersion    @relation(fields: [versionId], references: [id])
+
+  @@index([requesterId])
+  @@index([listingId])
+  @@index([status])
+  @@map("install_requests")
+}

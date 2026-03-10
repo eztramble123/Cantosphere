@@ -1,0 +1,3 @@
+-- Canton sandbox databases
+-- The main 'canton' database is created by POSTGRES_DB env var.
+-- Canton creates its own schemas within it for sequencer, mediator, and participant.

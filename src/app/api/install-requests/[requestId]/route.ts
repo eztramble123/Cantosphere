@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { startDeployment } from "@/lib/canton/deploy-orchestrator";
+import { isMockMode } from "@/lib/canton/service-factory";
+import { createContractServices } from "@/lib/canton/contracts";
 
 export async function GET(
   _req: NextRequest,
@@ -111,6 +113,17 @@ export async function PUT(
         where: { id: requestId },
         data: { status: "CANCELLED", completedAt: new Date() },
       });
+
+      // Cancel on-chain install request (best-effort)
+      if (!isMockMode() && request.onChainContractId) {
+        try {
+          const contracts = createContractServices();
+          await contracts.installs.cancelRequestOnChain(request.onChainContractId);
+        } catch (error) {
+          console.error("[Canton] Failed to cancel on-chain install request:", error);
+        }
+      }
+
       return NextResponse.json({ data: updated });
     }
 

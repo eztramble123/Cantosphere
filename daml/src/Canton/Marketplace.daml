@@ -1,0 +1,206 @@
+-- Canton Marketplace Daml Templates
+-- These templates define the on-chain contracts for the Canton Store marketplace.
+-- Field names and choice names match the TypeScript types in src/lib/canton/ledger-api/types.ts.
+
+module Canton.Marketplace where
+
+import Canton.Coin (CantonCoin)
+
+-- ─── Pricing Model ──────────────────────────────────────
+
+data PricingModel
+  = Free
+  | OneTime with amount : Text; currency : Text
+  | Subscription with amount : Text; currency : Text; intervalDays : Int
+  | UsageBased with ratePerMarker : Text; currency : Text
+  deriving (Eq, Show)
+
+-- ─── AppListing ─────────────────────────────────────────
+
+template AppListing
+  with
+    operator : Party
+    provider : Party
+    appId : Text
+    appName : Text
+    description : Text
+    darHash : Text
+    pricingModel : PricingModel
+    supportEmail : Text
+    supportUrl : Text
+    active : Bool
+  where
+    signatory operator, provider
+
+    key (operator, appId) : (Party, Text)
+    maintainer key._1
+
+    choice UpdateListing : ContractId AppListing
+      with
+        newDescription : Optional Text
+        newDarHash : Optional Text
+        newPricingModel : Optional PricingModel
+        newSupportEmail : Optional Text
+        newSupportUrl : Optional Text
+      controller provider
+      do
+        create this with
+          description = fromOptional this.description newDescription
+          darHash = fromOptional this.darHash newDarHash
+          pricingModel = fromOptional this.pricingModel newPricingModel
+          supportEmail = fromOptional this.supportEmail newSupportEmail
+          supportUrl = fromOptional this.supportUrl newSupportUrl
+
+    choice DelistApp : ()
+      controller provider
+      do
+        pure ()
+
+    choice RequestInstall : ContractId InstallRequest
+      with
+        requester : Party
+        nodeId : Text
+        versionId : Text
+      controller requester
+      do
+        create InstallRequest with
+          operator = this.operator
+          provider = this.provider
+          requester
+          listingContractId = show self
+          appName = this.appName
+          nodeId
+          versionId
+          status = "Pending"
+
+    nonconsuming choice Purchase : (ContractId License, Optional (ContractId CantonCoin))
+      with
+        buyer   : Party
+        coinCid : ContractId CantonCoin
+      controller buyer
+      do
+        coin <- fetch coinCid
+        let price = getOneTimePrice pricingModel
+        assertMsg "Insufficient CC" (coin.amount >= price)
+
+        -- Split if overpaying, transfer exact amount to provider
+        (paymentCid, changeCid) <- if coin.amount == price
+          then do
+            return (coinCid, None)
+          else do
+            (payCid, chCid) <- exercise coinCid Split with splitAmount = price
+            return (payCid, Some chCid)
+
+        -- Transfer payment to provider
+        exercise paymentCid Transfer with newOwner = provider
+
+        -- Create license
+        licenseCid <- create License with
+          operator
+          provider
+          licensee = buyer
+          listingContractId = show self
+          appName
+          pricingModel
+          grantedAt = "auto"
+          expiresAt = None
+          active = True
+
+        return (licenseCid, changeCid)
+
+-- ─── InstallRequest ─────────────────────────────────────
+
+template InstallRequest
+  with
+    operator : Party
+    provider : Party
+    requester : Party
+    listingContractId : Text
+    appName : Text
+    nodeId : Text
+    versionId : Text
+    status : Text
+  where
+    signatory operator, provider
+    observer requester
+
+    choice CancelRequest : ()
+      controller requester
+      do
+        pure ()
+
+    choice UpdateStatus : ContractId InstallRequest
+      with
+        newStatus : Text
+      controller operator
+      do
+        create this with
+          status = newStatus
+
+-- ─── Installation ───────────────────────────────────────
+
+template Installation
+  with
+    operator : Party
+    provider : Party
+    user : Party
+    appId : Text
+    appName : Text
+    nodeId : Text
+    versionId : Text
+    darHash : Text
+  where
+    signatory operator, provider
+    observer user
+
+    key (operator, user, appId) : (Party, Party, Text)
+    maintainer key._1
+
+-- ─── License ────────────────────────────────────────────
+
+template License
+  with
+    operator : Party
+    provider : Party
+    licensee : Party
+    listingContractId : Text
+    appName : Text
+    pricingModel : PricingModel
+    grantedAt : Text
+    expiresAt : Optional Text
+    active : Bool
+  where
+    signatory operator, provider
+    observer licensee
+
+    key (operator, licensee, listingContractId) : (Party, Party, Text)
+    maintainer key._1
+
+    choice Renew : ContractId License
+      with
+        renewedAt : Text
+      controller provider
+      do
+        create this with
+          grantedAt = renewedAt
+          active = True
+
+    choice Revoke : ()
+      controller operator
+      do
+        pure ()
+
+    choice Cancel : ()
+      controller licensee
+      do
+        pure ()
+
+-- ─── Helpers ────────────────────────────────────────────
+
+getOneTimePrice : PricingModel -> Decimal
+getOneTimePrice (OneTime amount _) = read amount
+getOneTimePrice _ = error "Not a one-time priced listing"
+
+fromOptional : a -> Optional a -> a
+fromOptional default None = default
+fromOptional _ (Some v) = v

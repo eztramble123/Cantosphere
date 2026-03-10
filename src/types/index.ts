@@ -18,6 +18,17 @@ export type AppWithDeveloper = App & {
   developer: Pick<User, "id" | "name" | "image" | "username">;
 };
 
+export type AppCardData = AppWithDeveloper & {
+  _count?: { installations: number; reviews: number };
+  avgRating?: number;
+  listing?: {
+    pricingModel: string;
+    priceAmount?: unknown;
+    priceCurrency?: string | null;
+    listingStatus: string;
+  } | null;
+};
+
 export type AppWithDetails = AppWithDeveloper & {
   versions: AppVersion[];
   categories: { category: Category }[];

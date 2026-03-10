@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  canton-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: canton
+      POSTGRES_PASSWORD: canton
+      POSTGRES_DB: canton
+    ports:
+      - "5433:5432"
+    volumes:
+      - canton-pg-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canton"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  canton:
+    image: digitalasset/canton-open-source:3.3.0
+    depends_on:
+      canton-postgres:
+        condition: service_healthy
+    ports:
+      - "5002:5002"   # Admin API (gRPC)
+      - "4021:4001"   # JSON Ledger API V2
+    volumes:
+      - ./canton/canton.conf:/canton/canton.conf
+      - ./canton/bootstrap.canton:/canton/bootstrap.canton
+    command: ["daemon", "--config", "/canton/canton.conf", "--bootstrap", "/canton/bootstrap.canton"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4001/v2/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  canton-pg-data:

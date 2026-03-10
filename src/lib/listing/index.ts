@@ -1,5 +1,8 @@
 import { db } from "@/lib/db";
 import type { PricingModel, ListingStatus } from "@prisma/client";
+import { isMockMode } from "@/lib/canton/service-factory";
+import { createContractServices } from "@/lib/canton/contracts";
+import { resolvePartyId } from "@/lib/canton/party-resolution";
 
 interface CreateListingInput {
   pricingModel: PricingModel;
@@ -52,7 +55,7 @@ export async function createListing(
 
   const latestVersion = app.versions[0];
 
-  return db.appListing.create({
+  const listing = await db.appListing.create({
     data: {
       appId,
       providerId: userId,
@@ -73,6 +76,32 @@ export async function createListing(
       },
     },
   });
+
+  // Create on-chain listing contract (non-blocking, best-effort)
+  if (!isMockMode()) {
+    try {
+      const contracts = createContractServices();
+      const providerParty = await resolvePartyId(userId);
+      await contracts.listings.createOnChainListing(listing.id, {
+        providerParty,
+        appId,
+        appName: app.name,
+        description: app.description ?? "",
+        darHash: latestVersion.darFileHash,
+        pricingModel: config.pricingModel,
+        priceAmount: config.priceAmount?.toString(),
+        priceCurrency: config.priceCurrency,
+        billingPeriodDays: config.billingPeriodDays,
+        usageRate: config.usageRate?.toString(),
+        supportEmail: config.supportEmail,
+        supportUrl: config.supportUrl,
+      });
+    } catch (error) {
+      console.error("[Canton] Failed to create on-chain listing:", error);
+    }
+  }
+
+  return listing;
 }
 
 /**
@@ -85,13 +114,13 @@ export async function updateListing(
 ) {
   const listing = await db.appListing.findUnique({
     where: { id: listingId },
-    select: { providerId: true },
+    select: { providerId: true, onChainContractId: true },
   });
 
   if (!listing) throw new Error("Listing not found");
   if (listing.providerId !== userId) throw new Error("Forbidden");
 
-  return db.appListing.update({
+  const updated = await db.appListing.update({
     where: { id: listingId },
     data: {
       ...updates,
@@ -104,6 +133,27 @@ export async function updateListing(
       },
     },
   });
+
+  // Update on-chain listing contract (best-effort)
+  if (!isMockMode() && listing.onChainContractId) {
+    try {
+      const contracts = createContractServices();
+      await contracts.listings.updateOnChainListing(listing.onChainContractId, {
+        newDescription: updates.listingStatus !== undefined ? undefined : undefined,
+        newPricingModel: updates.pricingModel,
+        newPriceAmount: updates.priceAmount?.toString(),
+        newPriceCurrency: updates.priceCurrency,
+        newBillingPeriodDays: updates.billingPeriodDays,
+        newUsageRate: updates.usageRate?.toString(),
+        newSupportEmail: updates.supportEmail === "" ? null : updates.supportEmail,
+        newSupportUrl: updates.supportUrl === "" ? null : updates.supportUrl,
+      });
+    } catch (error) {
+      console.error("[Canton] Failed to update on-chain listing:", error);
+    }
+  }
+
+  return updated;
 }
 
 /**
@@ -151,10 +201,20 @@ export async function heartbeat(listingId: string, userId: string) {
 export async function suspendListing(listingId: string, userId: string, isAdmin: boolean) {
   const listing = await db.appListing.findUnique({
     where: { id: listingId },
-    select: { providerId: true },
+    select: { providerId: true, onChainContractId: true },
   });
   if (!listing) throw new Error("Listing not found");
   if (listing.providerId !== userId && !isAdmin) throw new Error("Forbidden");
+
+  // Delist on-chain if contract exists
+  if (!isMockMode() && listing.onChainContractId) {
+    try {
+      const contracts = createContractServices();
+      await contracts.listings.delistOnChain(listing.onChainContractId);
+    } catch (error) {
+      console.error("[Canton] Failed to delist on-chain:", error);
+    }
+  }
 
   return db.appListing.update({
     where: { id: listingId },

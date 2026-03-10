@@ -6,6 +6,9 @@ import { paginate, paginationMeta } from "@/lib/utils/pagination";
 import { validateLicense, acquireLicense } from "@/lib/licensing";
 import { startDeployment } from "@/lib/canton/deploy-orchestrator";
 import { apiLimiter } from "@/lib/rate-limit";
+import { isMockMode } from "@/lib/canton/service-factory";
+import { createContractServices } from "@/lib/canton/contracts";
+import { resolvePartyId } from "@/lib/canton/party-resolution";
 
 export async function GET(req: NextRequest) {
   try {
@@ -192,6 +195,25 @@ export async function POST(req: NextRequest) {
         version: { select: { id: true, version: true } },
       },
     });
+
+    // Exercise RequestInstall on-chain if listing has a contract
+    if (!isMockMode() && listing.onChainContractId) {
+      try {
+        const contracts = createContractServices();
+        const requesterParty = await resolvePartyId(session.user.id);
+        await contracts.installs.requestInstallOnChain(
+          listing.onChainContractId,
+          installRequest.id,
+          {
+            requesterParty,
+            nodeId,
+            versionId,
+          }
+        );
+      } catch (error) {
+        console.error("[Canton] Failed to create on-chain install request:", error);
+      }
+    }
 
     // Auto-approve FREE active listings — no developer approval needed
     if (listing.pricingModel === "FREE" && listing.listingStatus === "ACTIVE") {

@@ -1,0 +1,270 @@
+-- Canton Marketplace Daml Script Tests
+module Canton.MarketplaceTest where
+
+import Canton.Marketplace
+import Daml.Script
+
+-- ─── Setup ──────────────────────────────────────────────
+
+data TestParties = TestParties with
+  operator : Party
+  provider : Party
+  validator1 : Party
+
+setupParties : Script TestParties
+setupParties = do
+  operator <- allocateParty "MarketplaceOperator"
+  provider <- allocateParty "AppProvider"
+  validator1 <- allocateParty "Validator1"
+  pure TestParties with ..
+
+-- ─── Test: Create and query an AppListing ───────────────
+
+testCreateListing : Script ()
+testCreateListing = script do
+  TestParties{..} <- setupParties
+
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "token-bridge"
+      appName = "Canton Token Bridge"
+      description = "Bridge tokens across Canton sub-networks."
+      darHash = "sha256:abc123"
+      pricingModel = Free
+      supportEmail = "support@example.com"
+      supportUrl = "https://example.com/support"
+      active = True
+
+  -- Verify the listing exists
+  Some listing <- queryContractId operator listingCid
+  assert (listing.appName == "Canton Token Bridge")
+  assert (listing.active == True)
+  pure ()
+
+-- ─── Test: Update a listing ─────────────────────────────
+
+testUpdateListing : Script ()
+testUpdateListing = script do
+  TestParties{..} <- setupParties
+
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "supply-chain"
+      appName = "Supply Chain Tracker"
+      description = "Original description"
+      darHash = "sha256:def456"
+      pricingModel = Free
+      supportEmail = "support@example.com"
+      supportUrl = ""
+      active = True
+
+  updatedCid <- submit provider do
+    exerciseCmd listingCid UpdateListing with
+      newDescription = Some "Updated description"
+      newDarHash = None
+      newPricingModel = Some (OneTime with amount = "100.00"; currency = "USD")
+      newSupportEmail = None
+      newSupportUrl = None
+
+  Some updated <- queryContractId operator updatedCid
+  assert (updated.description == "Updated description")
+  pure ()
+
+-- ─── Test: Delist an app ────────────────────────────────
+
+testDelistApp : Script ()
+testDelistApp = script do
+  TestParties{..} <- setupParties
+
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "to-delist"
+      appName = "App To Delist"
+      description = "Will be delisted"
+      darHash = "sha256:ghi789"
+      pricingModel = Free
+      supportEmail = ""
+      supportUrl = ""
+      active = True
+
+  submit provider do
+    exerciseCmd listingCid DelistApp
+
+  -- Verify the listing is archived
+  result <- queryContractId operator listingCid
+  assert (result == None)
+  pure ()
+
+-- ─── Test: Request install flow ─────────────────────────
+
+testRequestInstall : Script ()
+testRequestInstall = script do
+  TestParties{..} <- setupParties
+
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "install-test"
+      appName = "Install Test App"
+      description = "Testing install flow"
+      darHash = "sha256:jkl012"
+      pricingModel = Free
+      supportEmail = ""
+      supportUrl = ""
+      active = True
+
+  requestCid <- submit validator1 do
+    exerciseCmd listingCid RequestInstall with
+      requester = validator1
+      nodeId = "node-1"
+      versionId = "v1.0.0"
+
+  Some request <- queryContractId operator requestCid
+  assert (request.status == "Pending")
+  assert (request.nodeId == "node-1")
+  pure ()
+
+-- ─── Test: Cancel install request ───────────────────────
+
+testCancelRequest : Script ()
+testCancelRequest = script do
+  TestParties{..} <- setupParties
+
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "cancel-test"
+      appName = "Cancel Test App"
+      description = "Testing cancel"
+      darHash = "sha256:mno345"
+      pricingModel = Free
+      supportEmail = ""
+      supportUrl = ""
+      active = True
+
+  requestCid <- submit validator1 do
+    exerciseCmd listingCid RequestInstall with
+      requester = validator1
+      nodeId = "node-2"
+      versionId = "v1.0.0"
+
+  submit validator1 do
+    exerciseCmd requestCid CancelRequest
+
+  result <- queryContractId operator requestCid
+  assert (result == None)
+  pure ()
+
+-- ─── Test: License lifecycle ────────────────────────────
+
+testLicenseLifecycle : Script ()
+testLicenseLifecycle = script do
+  TestParties{..} <- setupParties
+
+  licenseCid <- submit operator do
+    createCmd License with
+      operator
+      provider
+      licensee = validator1
+      listingContractId = "listing-contract-123"
+      appName = "Licensed App"
+      pricingModel = Subscription with amount = "9.99"; currency = "USD"; intervalDays = 30
+      grantedAt = "2026-01-01T00:00:00Z"
+      expiresAt = Some "2026-02-01T00:00:00Z"
+      active = True
+
+  -- Renew
+  renewedCid <- submit provider do
+    exerciseCmd licenseCid Renew with
+      renewedAt = "2026-02-01T00:00:00Z"
+
+  Some renewed <- queryContractId operator renewedCid
+  assert (renewed.grantedAt == "2026-02-01T00:00:00Z")
+  assert (renewed.active == True)
+
+  -- Revoke
+  submit operator do
+    exerciseCmd renewedCid Revoke
+
+  result <- queryContractId operator renewedCid
+  assert (result == None)
+  pure ()
+
+-- ─── Test: License cancel by licensee ───────────────────
+
+testLicenseCancel : Script ()
+testLicenseCancel = script do
+  TestParties{..} <- setupParties
+
+  licenseCid <- submit operator do
+    createCmd License with
+      operator
+      provider
+      licensee = validator1
+      listingContractId = "listing-contract-456"
+      appName = "Cancelable App"
+      pricingModel = Free
+      grantedAt = "2026-01-15T00:00:00Z"
+      expiresAt = None
+      active = True
+
+  submit validator1 do
+    exerciseCmd licenseCid Cancel
+
+  result <- queryContractId operator licenseCid
+  assert (result == None)
+  pure ()
+
+-- ─── Test: Create installation ──────────────────────────
+
+testCreateInstallation : Script ()
+testCreateInstallation = script do
+  TestParties{..} <- setupParties
+
+  installCid <- submit operator do
+    createCmd Installation with
+      operator
+      provider
+      user = validator1
+      appId = "token-bridge"
+      appName = "Canton Token Bridge"
+      nodeId = "node-1"
+      versionId = "v1.1.0"
+      darHash = "sha256:tb110"
+
+  Some install <- queryContractId operator installCid
+  assert (install.appId == "token-bridge")
+  assert (install.versionId == "v1.1.0")
+  pure ()
+
+-- ─── Test: Pricing model variants ───────────────────────
+
+testPricingModels : Script ()
+testPricingModels = script do
+  TestParties{..} <- setupParties
+
+  -- Usage-based pricing
+  listingCid <- submit operator do
+    createCmd AppListing with
+      operator
+      provider
+      appId = "usage-app"
+      appName = "Usage App"
+      description = "Usage-based pricing test"
+      darHash = "sha256:usage"
+      pricingModel = UsageBased with ratePerMarker = "0.001"; currency = "USD"
+      supportEmail = ""
+      supportUrl = ""
+      active = True
+
+  Some listing <- queryContractId operator listingCid
+  assert (listing.pricingModel == UsageBased with ratePerMarker = "0.001"; currency = "USD")
+  pure ()

@@ -1,0 +1,29 @@
+// Canton bootstrap script — allocate parties and connect topology
+
+import com.digitalasset.canton.console.ParticipantReference
+
+// Wait for nodes to be initialized
+sequencer1.health.wait_for_initialized()
+mediator1.health.wait_for_initialized()
+participant1.health.wait_for_initialized()
+
+// Initialize the synchronizer (sequencer + mediator)
+sequencer1.topology.init_id("sequencer1")
+mediator1.topology.init_id("mediator1")
+participant1.topology.init_id("participant1")
+
+// Connect the synchronizer
+val sync = sequencer1.topology.init_synchronizer("sandbox")
+mediator1.topology.authorize_synchronizer("sandbox", sequencer1)
+
+// Connect participant to the synchronizer
+participant1.synchronizers.connect_local(sequencer1, alias = "sandbox")
+
+// Allocate parties
+val operator = participant1.parties.enable("MarketplaceOperator")
+val provider = participant1.parties.enable("AppProvider")
+val validator1 = participant1.parties.enable("Validator1")
+
+println(s"MarketplaceOperator: $operator")
+println(s"AppProvider: $provider")
+println(s"Validator1: $validator1")

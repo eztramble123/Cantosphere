@@ -18,6 +18,7 @@ import {
   X,
   Store,
   Key,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ const navItemsByRole: Record<UserRole, NavItem[]> = {
     { label: "Nodes", href: "/validator/nodes", icon: Server },
     { label: "Deployments", href: "/validator/deployments", icon: Rocket },
     { label: "Licenses", href: "/validator/licenses", icon: Key },
+    { label: "Wallet", href: "/validator/wallet", icon: Wallet },
     { label: "Install Requests", href: "/validator/install-requests", icon: ClipboardList },
   ],
   DEVELOPER: [

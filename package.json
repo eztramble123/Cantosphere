@@ -13,7 +13,12 @@
     "fetch-protos": "bash scripts/fetch-protos.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "sandbox:start": "bash scripts/sandbox-start.sh",
+    "sandbox:stop": "bash scripts/sandbox-stop.sh",
+    "sandbox:reset": "bash scripts/sandbox-reset.sh",
+    "sandbox:parties": "bash scripts/allocate-parties.sh"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

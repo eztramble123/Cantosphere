@@ -10,7 +10,7 @@ import type { NodeConnectionConfig } from "./types";
  * - CANTON_MOCK_MODE=true is set explicitly, OR
  * - NODE_ENV=development AND no CANTON_ADMIN_URL is configured
  */
-function isMockMode(): boolean {
+export function isMockMode(): boolean {
   if (process.env.CANTON_MOCK_MODE === "true") return true;
   if (process.env.CANTON_MOCK_MODE === "false") return false;
   return process.env.NODE_ENV === "development" && !process.env.CANTON_ADMIN_URL;

@@ -19,3 +19,41 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
+
+  integration:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+
+      - name: Start Canton sandbox
+        run: |
+          docker compose -f docker/docker-compose.yml up -d
+          echo "Waiting for Canton sandbox..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4021/v2/version > /dev/null 2>&1; then
+              echo "Canton sandbox ready"
+              break
+            fi
+            echo "  Attempt $i/60..."
+            sleep 5
+          done
+
+      - name: Allocate parties
+        run: bash scripts/allocate-parties.sh
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          CANTON_JSON_API_URL: http://localhost:4021
+
+      - name: Stop Canton sandbox
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v

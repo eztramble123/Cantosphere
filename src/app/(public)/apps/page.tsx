@@ -43,6 +43,9 @@ export default async function AppsPage({ searchParams }: Props) {
       include: {
         developer: { select: { id: true, name: true, image: true, username: true } },
         _count: { select: { installations: true, reviews: true } },
+        listing: {
+          select: { pricingModel: true, priceAmount: true, priceCurrency: true, listingStatus: true },
+        },
       },
       orderBy,
       skip: (page - 1) * pageSize,

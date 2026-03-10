@@ -96,6 +96,16 @@ export const acquireLicenseSchema = z.object({
   listingId: z.string(),
 });
 
+// ─── Payment Validators ─────────────────────────────────
+
+export const purchaseSchema = z.object({
+  listingId: z.string(),
+});
+
+export const mintSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d+)?$/, "Must be a decimal number"),
+});
+
 // ─── Install Request Validators ──────────────────────────
 
 export const createInstallRequestSchema = z.object({

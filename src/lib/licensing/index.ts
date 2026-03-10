@@ -1,8 +1,11 @@
 import { db } from "@/lib/db";
+import { isMockMode } from "@/lib/canton/service-factory";
+import { createContractServices } from "@/lib/canton/contracts";
+import { resolvePartyId } from "@/lib/canton/party-resolution";
 
 /**
  * Acquire a license for a listing.
- * FREE apps get auto-granted. Paid apps create an ACTIVE license (payment integration TBD).
+ * FREE apps get auto-granted. ONE_TIME paid apps must use purchaseWithCC() instead.
  */
 export async function acquireLicense(listingId: string, userId: string) {
   const listing = await db.appListing.findUnique({
@@ -11,6 +14,9 @@ export async function acquireLicense(listingId: string, userId: string) {
 
   if (!listing) throw new Error("Listing not found");
   if (listing.listingStatus !== "ACTIVE") throw new Error("Listing is not active");
+  if (listing.pricingModel === "ONE_TIME") {
+    throw new Error("Use purchaseWithCC for ONE_TIME paid listings");
+  }
 
   // Check for existing active license
   const existing = await db.license.findUnique({
@@ -49,7 +55,7 @@ export async function acquireLicense(listingId: string, userId: string) {
     });
   }
 
-  return db.license.create({
+  const license = await db.license.create({
     data: {
       listingId,
       licenseeId: userId,
@@ -65,6 +71,31 @@ export async function acquireLicense(listingId: string, userId: string) {
       },
     },
   });
+
+  // Create on-chain license contract (non-blocking, best-effort)
+  if (!isMockMode() && listing.onChainContractId) {
+    try {
+      const contracts = createContractServices();
+      const providerParty = await resolvePartyId(listing.providerId);
+      const licenseeParty = await resolvePartyId(userId);
+      await contracts.licenses.grantLicenseOnChain(license.id, {
+        providerParty,
+        licenseeParty,
+        listingContractId: listing.onChainContractId,
+        appName: license.listing.app.name,
+        pricingModel: listing.pricingModel,
+        priceAmount: listing.priceAmount?.toString(),
+        priceCurrency: listing.priceCurrency,
+        billingPeriodDays: listing.billingPeriodDays,
+        usageRate: listing.usageRate?.toString(),
+        expiresAt,
+      });
+    } catch (error) {
+      console.error("[Canton] Failed to create on-chain license:", error);
+    }
+  }
+
+  return license;
 }
 
 /**
@@ -110,6 +141,20 @@ export async function revokeLicense(
   const isProvider = license.listing.providerId === userId;
   if (!isLicensee && !isProvider && !isAdmin) {
     throw new Error("Forbidden");
+  }
+
+  // Revoke or cancel on-chain
+  if (!isMockMode() && license.onChainContractId) {
+    try {
+      const contracts = createContractServices();
+      if (isLicensee) {
+        await contracts.licenses.cancelOnChain(license.onChainContractId);
+      } else {
+        await contracts.licenses.revokeOnChain(license.onChainContractId);
+      }
+    } catch (error) {
+      console.error("[Canton] Failed to revoke/cancel on-chain license:", error);
+    }
   }
 
   return db.license.update({

@@ -1,8 +1,10 @@
 import { db } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
 import type { IPackageService } from "./package-service";
-import { createPackageService } from "./service-factory";
+import { createPackageService, isMockMode } from "./service-factory";
 import { validateDar } from "./dar-parser";
+import { createContractServices } from "./contracts";
+import { resolvePartyId } from "./party-resolution";
 import { DeployStep, type DeploymentContext } from "./types";
 import type { DeploymentStatus, StepStatus } from "@prisma/client";
 
@@ -210,12 +212,22 @@ export class DeployOrchestrator {
           statusMessage: errorMessage,
           completedAt: new Date(),
         },
-        select: { requesterId: true, listing: { select: { appId: true } } },
+        select: {
+          requesterId: true,
+          listing: {
+            select: {
+              appId: true,
+              providerId: true,
+              darHash: true,
+              app: { select: { id: true, name: true } },
+            },
+          },
+        },
       });
 
       // On success, upsert an Installation record
       if (status === "COMPLETED") {
-        await db.installation.upsert({
+        const installation = await db.installation.upsert({
           where: {
             userId_appId: {
               userId: request.requesterId,
@@ -233,6 +245,26 @@ export class DeployOrchestrator {
             versionId: this.ctx.versionId,
           },
         });
+
+        // Create on-chain Installation contract (best-effort)
+        if (!isMockMode()) {
+          try {
+            const providerParty = await resolvePartyId(request.listing.providerId);
+            const userParty = await resolvePartyId(request.requesterId);
+            const contracts = createContractServices();
+            await contracts.installs.completeInstallationOnChain(installation.id, {
+              providerParty,
+              userParty,
+              appId: request.listing.app.id,
+              appName: request.listing.app.name,
+              nodeId: this.ctx.nodeId,
+              versionId: this.ctx.versionId!,
+              darHash: request.listing.darHash,
+            });
+          } catch (onChainErr) {
+            console.error("[Canton] Failed to create on-chain installation:", onChainErr);
+          }
+        }
       }
     } catch (err) {
       // Bookkeeping failure must not corrupt the deployment

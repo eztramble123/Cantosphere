@@ -118,6 +118,19 @@ describe("acquireLicense", () => {
     );
   });
 
+  it("throws for ONE_TIME listings directing to purchaseWithCC", async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      id: "listing1",
+      listingStatus: "ACTIVE",
+      pricingModel: "ONE_TIME",
+    } as never);
+
+    await expect(acquireLicense("listing1", "user1")).rejects.toThrow(
+      "Use purchaseWithCC for ONE_TIME paid listings"
+    );
+    expect(mockDb.license.create).not.toHaveBeenCalled();
+  });
+
   it("creates a new license for FREE listing", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({
       id: "listing1",

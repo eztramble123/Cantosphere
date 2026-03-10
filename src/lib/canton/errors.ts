@@ -40,3 +40,10 @@ export class DarValidationError extends CantonError {
     this.name = "DarValidationError";
   }
 }
+
+export class LedgerApiError extends CantonError {
+  constructor(details?: string) {
+    super(details || "Ledger API operation failed", "LEDGER_API_ERROR", details);
+    this.name = "LedgerApiError";
+  }
+}

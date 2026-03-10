@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Dialog,
   DialogContent,
@@ -59,11 +60,20 @@ export function InstallRequestDialog({
   const [error, setError] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [deploymentId, setDeploymentId] = useState<string | null>(null);
+  const [ccBalance, setCcBalance] = useState<string | null>(null);
 
   const isFree = listing.pricingModel === "FREE";
+  const isOneTime = listing.pricingModel === "ONE_TIME";
   const priceLabel = isFree
     ? "Free"
-    : `$${(listing.priceAmount ?? 0).toFixed(2)} ${listing.priceCurrency || "USD"}`;
+    : isOneTime
+      ? `${listing.priceAmount ?? 0} ${listing.priceCurrency || "CC"}`
+      : `$${(listing.priceAmount ?? 0).toFixed(2)} ${listing.priceCurrency || "USD"}`;
+
+  const insufficientBalance =
+    isOneTime &&
+    ccBalance !== null &&
+    parseFloat(ccBalance) < (listing.priceAmount ?? 0);
 
   async function checkLicense() {
     setIsLoading(true);
@@ -82,11 +92,20 @@ export function InstallRequestDialog({
 
       if (existing || isFree) {
         setHasLicense(true);
-        setStep("license");
       } else {
         setHasLicense(false);
-        setStep("license");
       }
+
+      // Fetch CC balance for ONE_TIME listings when no license exists
+      if (isOneTime && !existing) {
+        const balRes = await fetch("/api/wallet/balance");
+        if (balRes.ok) {
+          const { data: walletData } = await balRes.json();
+          setCcBalance(walletData.balance);
+        }
+      }
+
+      setStep("license");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to check license";
       setError(message);
@@ -115,6 +134,35 @@ export function InstallRequestDialog({
       setHasLicense(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to acquire license";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function purchaseWithCC() {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/purchase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        if (res.status === 402) {
+          throw new Error(`Insufficient CC balance. You need ${listing.priceAmount} CC.`);
+        }
+        throw new Error(data.error || "Purchase failed");
+      }
+
+      setHasLicense(true);
+      toast.success("License acquired via CC payment");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Purchase failed";
       setError(message);
       toast.error(message);
     } finally {
@@ -172,6 +220,7 @@ export function InstallRequestDialog({
     setError(null);
     setRequestId(null);
     setDeploymentId(null);
+    setCcBalance(null);
     onOpenChange(false);
   }
 
@@ -290,18 +339,42 @@ export function InstallRequestDialog({
                     <Badge variant="outline">Not Licensed</Badge>
                   )}
                 </div>
+                {isOneTime && ccBalance !== null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">CC Balance</span>
+                    <span
+                      className={`text-sm font-mono ${
+                        insufficientBalance ? "text-destructive" : ""
+                      }`}
+                    >
+                      {ccBalance} CC
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {insufficientBalance && (
+                <p className="text-sm text-destructive">
+                  Insufficient balance.{" "}
+                  <Link
+                    href="/validator/wallet"
+                    className="underline"
+                  >
+                    Top up wallet
+                  </Link>
+                </p>
+              )}
 
               {!hasLicense && !isFree && (
                 <Button
-                  onClick={acquireLicense}
-                  disabled={isLoading}
+                  onClick={isOneTime ? purchaseWithCC : acquireLicense}
+                  disabled={isLoading || insufficientBalance}
                   className="w-full"
                 >
                   {isLoading && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}
-                  Acquire License — {priceLabel}
+                  {isOneTime ? `Pay ${priceLabel}` : `Acquire License — ${priceLabel}`}
                 </Button>
               )}
 

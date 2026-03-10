@@ -1,13 +1,10 @@
 "use client";
 
 import { AppCard } from "./app-card";
-import type { AppWithDeveloper } from "@/types";
+import type { AppCardData } from "@/types";
 
 interface AppGridProps {
-  apps: (AppWithDeveloper & {
-    _count?: { installations: number; reviews: number };
-    avgRating?: number;
-  })[];
+  apps: AppCardData[];
 }
 
 export function AppGrid({ apps }: AppGridProps) {

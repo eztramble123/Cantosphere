@@ -36,6 +36,7 @@ model User {
   providerListings  AppListing[]       @relation("ProviderListings")
   licenses          License[]          @relation("UserLicenses")
   installRequests   InstallRequest[]   @relation("UserInstallRequests")
+  partyMappings     CantonPartyMapping[]
 
   @@map("users")
 }
@@ -244,13 +245,14 @@ model ValidatorNode {
 // ─── Installations & Deployments ─────────────────────────
 
 model Installation {
-  id        String      @id @default(cuid())
-  userId    String
-  appId     String
-  nodeId    String?
-  versionId String?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  userId            String
+  appId             String
+  nodeId            String?
+  versionId         String?
+  onChainContractId String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   app     App            @relation(fields: [appId], references: [id], onDelete: Cascade)
@@ -448,4 +450,21 @@ model InstallRequest {
   @@index([listingId])
   @@index([status])
   @@map("install_requests")
+}
+
+// ─── Canton Party Mappings ──────────────────────────────
+
+model CantonPartyMapping {
+  id            String   @id @default(cuid())
+  userId        String
+  partyId       String
+  participantId String
+  role          String
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, participantId])
+  @@index([partyId])
+  @@map("canton_party_mappings")
 }

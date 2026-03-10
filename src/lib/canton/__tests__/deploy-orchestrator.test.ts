@@ -47,14 +47,31 @@ const mockPackageService = {
 
 vi.mock("../service-factory", () => ({
   createPackageService: vi.fn(() => mockPackageService),
+  isMockMode: vi.fn(() => true),
+}));
+
+const mockCompleteInstallationOnChain = vi.fn(() => Promise.resolve("contract-123"));
+
+vi.mock("../contracts", () => ({
+  createContractServices: vi.fn(() => ({
+    installs: {
+      completeInstallationOnChain: mockCompleteInstallationOnChain,
+    },
+  })),
+}));
+
+vi.mock("../party-resolution", () => ({
+  resolvePartyId: vi.fn((userId: string) => Promise.resolve(`${userId}::participant1`)),
 }));
 
 import { db } from "@/lib/db";
 import { validateDar } from "../dar-parser";
+import { isMockMode } from "../service-factory";
 import { DeployOrchestrator, startDeployment } from "../deploy-orchestrator";
 
 const mockDb = vi.mocked(db);
 const mockValidateDar = vi.mocked(validateDar);
+const mockIsMockMode = vi.mocked(isMockMode);
 
 function createTestContext() {
   return {
@@ -70,11 +87,17 @@ function createTestContext() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsMockMode.mockReturnValue(true);
   mockDb.installRequest.update.mockResolvedValue({
     requesterId: "user-1",
-    listing: { appId: "app-1" },
+    listing: {
+      appId: "app-1",
+      providerId: "provider-1",
+      darHash: "test-hash",
+      app: { id: "app-1", name: "Test App" },
+    },
   } as never);
-  mockDb.installation.upsert.mockResolvedValue({} as never);
+  mockDb.installation.upsert.mockResolvedValue({ id: "install-1" } as never);
 });
 
 describe("DeployOrchestrator", () => {
@@ -195,6 +218,68 @@ describe("DeployOrchestrator", () => {
       await orchestrator.execute();
 
       expect(mockDb.installRequest.update).not.toHaveBeenCalled();
+    });
+
+    it("calls completeInstallationOnChain when not in mock mode", async () => {
+      mockIsMockMode.mockReturnValue(false);
+
+      const ctx = {
+        ...createTestContext(),
+        installRequestId: "req-1",
+      };
+
+      const orchestrator = new DeployOrchestrator(ctx);
+      await orchestrator.execute();
+
+      expect(mockCompleteInstallationOnChain).toHaveBeenCalledWith(
+        "install-1",
+        expect.objectContaining({
+          providerParty: "provider-1::participant1",
+          userParty: "user-1::participant1",
+          appId: "app-1",
+          appName: "Test App",
+          nodeId: "node-1",
+          versionId: "ver-1",
+          darHash: "test-hash",
+        })
+      );
+    });
+
+    it("does not call completeInstallationOnChain in mock mode", async () => {
+      mockIsMockMode.mockReturnValue(true);
+
+      const ctx = {
+        ...createTestContext(),
+        installRequestId: "req-1",
+      };
+
+      const orchestrator = new DeployOrchestrator(ctx);
+      await orchestrator.execute();
+
+      expect(mockCompleteInstallationOnChain).not.toHaveBeenCalled();
+    });
+
+    it("does not corrupt deployment status when on-chain call fails", async () => {
+      mockIsMockMode.mockReturnValue(false);
+      mockCompleteInstallationOnChain.mockRejectedValueOnce(
+        new Error("Ledger unavailable")
+      );
+
+      const ctx = {
+        ...createTestContext(),
+        installRequestId: "req-1",
+      };
+
+      const orchestrator = new DeployOrchestrator(ctx);
+      await orchestrator.execute();
+
+      // Deployment should still be marked COMPLETED despite on-chain failure
+      const deploymentCalls = mockDb.deployment.update.mock.calls;
+      const lastCall = deploymentCalls[deploymentCalls.length - 1];
+      expect(lastCall[0].data.status).toBe("COMPLETED");
+
+      // Installation upsert should still have happened
+      expect(mockDb.installation.upsert).toHaveBeenCalled();
     });
   });
 });

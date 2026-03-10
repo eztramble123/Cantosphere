@@ -86,7 +86,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof Error) {
       const status =
         error.message === "Listing not found" ? 404 :
-        error.message === "Listing is not active" || error.message === "Already licensed" ? 400 :
+        error.message === "Listing is not active" ||
+        error.message === "Already licensed" ||
+        error.message === "Use purchaseWithCC for ONE_TIME paid listings" ? 400 :
         500;
       if (status !== 500) {
         return NextResponse.json({ error: error.message }, { status });

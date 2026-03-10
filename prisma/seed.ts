@@ -336,7 +336,7 @@ async function main() {
   });
   console.log(`Seeded validator node: ${aliceNode.id}`);
 
-  // ─── App Listing ─────────────────────────────────────────
+  // ─── App Listings ────────────────────────────────────────
   await prisma.appListing.upsert({
     where: { appId: tokenBridge.id },
     update: {},
@@ -348,7 +348,22 @@ async function main() {
       darHash: "sha256:tb110eeffgghh",
     },
   });
-  console.log("Seeded app listing");
+
+  // ONE_TIME paid listing for Supply Chain Tracker (for CC payment testing)
+  await prisma.appListing.upsert({
+    where: { appId: supplyChain.id },
+    update: {},
+    create: {
+      appId: supplyChain.id,
+      providerId: bob.id,
+      pricingModel: "ONE_TIME",
+      priceAmount: 50,
+      priceCurrency: "CC",
+      listingStatus: "ACTIVE",
+      darHash: "sha256:sc090aabbccdd",
+    },
+  });
+  console.log("Seeded 2 app listings");
 
   // ─── Installations ───────────────────────────────────────
   await prisma.installation.upsert({
@@ -395,6 +410,51 @@ async function main() {
     },
   });
   console.log("Seeded 2 reviews");
+
+  // ─── Canton Party Mappings ────────────────────────────
+  const participantId = process.env.CANTON_PARTICIPANT_ID || "participant1";
+
+  const partyMappings = [
+    {
+      userId: alice.id,
+      partyId:
+        process.env.CANTON_PARTY_VALIDATOR1 || "Validator1::sandbox",
+      participantId,
+      role: "VALIDATOR",
+    },
+    {
+      userId: bob.id,
+      partyId:
+        process.env.CANTON_PARTY_APP_PROVIDER || "AppProvider::sandbox",
+      participantId,
+      role: "DEVELOPER",
+    },
+    {
+      userId: carol.id,
+      partyId:
+        process.env.CANTON_PARTY_MARKETPLACE_OPERATOR ||
+        "MarketplaceOperator::sandbox",
+      participantId,
+      role: "ADMIN",
+    },
+  ];
+
+  for (const mapping of partyMappings) {
+    await prisma.cantonPartyMapping.upsert({
+      where: {
+        userId_participantId: {
+          userId: mapping.userId,
+          participantId: mapping.participantId,
+        },
+      },
+      update: {
+        partyId: mapping.partyId,
+        role: mapping.role,
+      },
+      create: mapping,
+    });
+  }
+  console.log(`Seeded ${partyMappings.length} Canton party mappings`);
 
   console.log("Seeding complete!");
 }

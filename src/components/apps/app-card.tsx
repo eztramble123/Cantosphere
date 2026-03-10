@@ -4,13 +4,29 @@ import Link from "next/link";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Star, Download } from "lucide-react";
-import type { AppWithDeveloper } from "@/types";
+import type { AppCardData } from "@/types";
 
 interface AppCardProps {
-  app: AppWithDeveloper & {
-    _count?: { installations: number; reviews: number };
-    avgRating?: number;
-  };
+  app: AppCardData;
+}
+
+function PricingBadge({ listing }: { listing: AppCardData["listing"] }) {
+  if (!listing) return null;
+
+  switch (listing.pricingModel) {
+    case "FREE":
+      return <Badge variant="secondary">Free</Badge>;
+    case "ONE_TIME": {
+      const amount = listing.priceAmount != null ? String(listing.priceAmount) : "0";
+      return <Badge>{amount} CC</Badge>;
+    }
+    case "SUBSCRIPTION": {
+      const amount = listing.priceAmount != null ? String(listing.priceAmount) : "0";
+      return <Badge variant="outline">{amount}/mo</Badge>;
+    }
+    default:
+      return null;
+  }
 }
 
 export function AppCard({ app }: AppCardProps) {
@@ -48,6 +64,7 @@ export function AppCard({ app }: AppCardProps) {
             <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
             <span>{app.avgRating?.toFixed(1) || "N/A"}</span>
           </div>
+          <PricingBadge listing={app.listing} />
           <div className="flex items-center gap-1">
             <Download className="h-4 w-4" />
             <span>{app._count?.installations || 0}</span>

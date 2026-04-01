@@ -5,6 +5,7 @@ import { createInstallRequestSchema, paginationSchema } from "@/lib/validators";
 import { paginate, paginationMeta } from "@/lib/utils/pagination";
 import { validateLicense, acquireLicense } from "@/lib/licensing";
 import { startDeployment } from "@/lib/canton/deploy-orchestrator";
+import { checkDuplicateDeployment } from "@/lib/canton/deployment-guard";
 import { apiLimiter } from "@/lib/rate-limit";
 import { isMockMode } from "@/lib/canton/service-factory";
 import { createContractServices } from "@/lib/canton/contracts";
@@ -224,12 +225,18 @@ export async function POST(req: NextRequest) {
       });
 
       if (versionWithPackages) {
-        const deployment = await db.deployment.create({
-          data: {
-            nodeId,
-            versionId,
-            status: "PENDING",
-          },
+        // Check + create atomically to prevent race conditions
+        const { deployment, isDuplicate } = await db.$transaction(async (tx) => {
+          const existing = await checkDuplicateDeployment(nodeId, versionId, tx);
+          if (existing) return { deployment: existing, isDuplicate: true };
+          const created = await tx.deployment.create({
+            data: {
+              nodeId,
+              versionId,
+              status: "PENDING",
+            },
+          });
+          return { deployment: created, isDuplicate: false };
         });
 
         const updated = await db.installRequest.update({
@@ -251,21 +258,23 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        await startDeployment({
-          deploymentId: deployment.id,
-          nodeId,
-          nodeConfig: {
-            host: node.host,
-            port: node.port,
-            useTls: node.useTls,
-          },
-          synchronizerId: node.synchronizerId || undefined,
-          darFileKey: versionWithPackages.darFileKey,
-          darFileHash: versionWithPackages.darFileHash,
-          packageIds: versionWithPackages.packages.map((p) => p.packageId),
-          versionId,
-          installRequestId: installRequest.id,
-        });
+        if (!isDuplicate) {
+          await startDeployment({
+            deploymentId: deployment.id,
+            nodeId,
+            nodeConfig: {
+              host: node.host,
+              port: node.port,
+              useTls: node.useTls,
+            },
+            synchronizerId: node.synchronizerId || undefined,
+            darFileKey: versionWithPackages.darFileKey,
+            darFileHash: versionWithPackages.darFileHash,
+            packageIds: versionWithPackages.packages.map((p) => p.packageId),
+            versionId,
+            installRequestId: installRequest.id,
+          });
+        }
 
         return NextResponse.json({ data: updated }, { status: 201 });
       }

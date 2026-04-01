@@ -25,11 +25,28 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { page, pageSize, category, status, sort, developerId } = parsed.data;
+    const { page, pageSize, category, sort, developerId } = parsed.data;
+    const queryStatus = parsed.data.status;
 
-    const where: Record<string, unknown> = {
-      status: status || "PUBLISHED",
-    };
+    // Enforce visibility: unauthenticated users can only see PUBLISHED apps.
+    // Authenticated non-admins can filter non-PUBLISHED only for their own apps.
+    const session = await auth();
+    let statusFilter: string = "PUBLISHED";
+    const where: Record<string, unknown> = {};
+
+    if (queryStatus && queryStatus !== "PUBLISHED") {
+      if (session?.user?.role === "ADMIN") {
+        statusFilter = queryStatus;
+      } else if (session?.user) {
+        statusFilter = queryStatus;
+        where.developerId = session.user.id;
+      }
+      // Unauthenticated: ignore non-PUBLISHED filter
+    } else if (queryStatus === "PUBLISHED") {
+      statusFilter = "PUBLISHED";
+    }
+
+    where.status = statusFilter;
 
     if (category) {
       where.categories = {
@@ -38,6 +55,10 @@ export async function GET(req: NextRequest) {
     }
 
     if (developerId) {
+      // Non-admin can only filter by their own developerId for non-PUBLISHED
+      if (statusFilter !== "PUBLISHED" && session?.user?.role !== "ADMIN" && developerId !== session?.user?.id) {
+        where.status = "PUBLISHED";
+      }
       where.developerId = developerId;
     }
 

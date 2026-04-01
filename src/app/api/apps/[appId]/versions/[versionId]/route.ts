@@ -8,11 +8,6 @@ export async function GET(
   { params }: { params: Promise<{ appId: string; versionId: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { appId, versionId } = await params;
 
     const version = await db.appVersion.findFirst({
@@ -31,13 +26,15 @@ export async function GET(
       );
     }
 
-    // Only published apps can be downloaded publicly; developers can download their own
-    if (
-      version.app.status !== "PUBLISHED" &&
-      version.app.developerId !== session.user.id &&
-      session.user.role !== "ADMIN"
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Published apps can be downloaded by anyone; unpublished only by developer or admin
+    if (version.app.status !== "PUBLISHED") {
+      const session = await auth();
+      if (
+        !session?.user ||
+        (version.app.developerId !== session.user.id && session.user.role !== "ADMIN")
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const storage = getStorage();

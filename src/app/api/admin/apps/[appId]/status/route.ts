@@ -3,6 +3,15 @@ import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { updateAppStatusSchema } from "@/lib/validators";
 import { apiLimiter } from "@/lib/rate-limit";
+import type { AppStatus } from "@prisma/client";
+
+const VALID_TRANSITIONS: Record<AppStatus, AppStatus[]> = {
+  DRAFT: ["IN_REVIEW"],
+  IN_REVIEW: ["PUBLISHED", "REJECTED"],
+  PUBLISHED: ["ARCHIVED"],
+  REJECTED: ["DRAFT"],
+  ARCHIVED: ["DRAFT"],
+};
 
 export async function PATCH(
   req: NextRequest,
@@ -37,10 +46,19 @@ export async function PATCH(
       return NextResponse.json({ error: "App not found" }, { status: 404 });
     }
 
+    const targetStatus = parsed.data.status as AppStatus;
+    const allowed = VALID_TRANSITIONS[app.status as AppStatus] ?? [];
+    if (!allowed.includes(targetStatus)) {
+      return NextResponse.json(
+        { error: `Cannot transition from ${app.status} to ${targetStatus}` },
+        { status: 400 }
+      );
+    }
+
     const updated = await db.app.update({
       where: { id: appId },
       data: {
-        status: parsed.data.status,
+        status: targetStatus,
         rejectionReason: parsed.data.rejectionReason ?? null,
       },
     });

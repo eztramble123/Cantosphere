@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { checkNodeHealth } from "@/lib/canton/client";
+import { isMockMode } from "@/lib/canton/service-factory";
 
 export async function GET(
   _req: NextRequest,
@@ -25,11 +26,14 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const isHealthy = await checkNodeHealth({
-      host: node.host,
-      port: node.port,
-      useTls: node.useTls,
-    });
+    // In mock mode, return synthetic healthy status without hitting real gRPC
+    const isHealthy = isMockMode()
+      ? true
+      : await checkNodeHealth({
+          host: node.host,
+          port: node.port,
+          useTls: node.useTls,
+        });
 
     const healthStatus = isHealthy ? "HEALTHY" : "UNREACHABLE";
 

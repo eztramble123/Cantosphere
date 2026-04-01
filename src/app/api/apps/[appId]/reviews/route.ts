@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { createReviewSchema, paginationSchema } from "@/lib/validators";
 import { paginate, paginationMeta } from "@/lib/utils/pagination";
+import { checkAppVisibility } from "@/lib/utils/app-visibility";
 
 export async function GET(
   req: NextRequest,
@@ -22,10 +23,7 @@ export async function GET(
 
     const { page, pageSize } = parsed.data;
 
-    const app = await db.app.findUnique({
-      where: { id: appId },
-      select: { id: true },
-    });
+    const app = await checkAppVisibility(appId);
     if (!app) {
       return NextResponse.json({ error: "App not found" }, { status: 404 });
     }

@@ -2,7 +2,6 @@ import { db } from "@/lib/db";
 import { isMockMode } from "@/lib/canton/service-factory";
 import { createContractServices } from "@/lib/canton/contracts";
 import { resolvePartyId } from "@/lib/canton/party-resolution";
-import { acquireLicense } from "@/lib/licensing";
 
 /**
  * Purchase a ONE_TIME listing with Canton Coin (CC).
@@ -30,9 +29,32 @@ export async function purchaseWithCC(listingId: string, userId: string) {
     throw new Error("Already licensed");
   }
 
-  // Mock mode: fall back to direct license creation
+  // Mock mode: create license directly (skip on-chain purchase)
   if (isMockMode()) {
-    return acquireLicense(listingId, userId);
+    if (existing) {
+      return db.license.update({
+        where: { id: existing.id },
+        data: {
+          status: "ACTIVE",
+          pricingModel: listing.pricingModel,
+          grantedAt: new Date(),
+          amountPaid: listing.priceAmount,
+          paymentRef: "cc:mock",
+        },
+        include: { listing: { include: { app: { select: { id: true, name: true, slug: true } } } } },
+      });
+    }
+    return db.license.create({
+      data: {
+        listingId,
+        licenseeId: userId,
+        pricingModel: listing.pricingModel,
+        status: "ACTIVE",
+        amountPaid: listing.priceAmount,
+        paymentRef: "cc:mock",
+      },
+      include: { listing: { include: { app: { select: { id: true, name: true, slug: true } } } } },
+    });
   }
 
   // ── On-chain purchase flow ────────────────────────────

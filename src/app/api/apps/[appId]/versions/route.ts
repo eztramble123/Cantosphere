@@ -6,6 +6,7 @@ import { parseDar, computeDarHash } from "@/lib/canton/dar-parser";
 import { getStorage } from "@/lib/storage";
 import { nanoid } from "nanoid";
 import { apiLimiter } from "@/lib/rate-limit";
+import { checkAppVisibility } from "@/lib/utils/app-visibility";
 
 export async function GET(
   req: NextRequest,
@@ -14,10 +15,7 @@ export async function GET(
   try {
     const { appId } = await params;
 
-    const app = await db.app.findUnique({
-      where: { id: appId },
-      select: { id: true },
-    });
+    const app = await checkAppVisibility(appId);
     if (!app) {
       return NextResponse.json({ error: "App not found" }, { status: 404 });
     }
@@ -128,41 +126,48 @@ export async function POST(
     const storage = getStorage();
     await storage.save(darFileKey, buffer);
 
-    // Create version and package records in a transaction
-    const newVersion = await db.$transaction(async (tx) => {
-      // Mark all existing versions as not latest
-      await tx.appVersion.updateMany({
-        where: { appId, isLatest: true },
-        data: { isLatest: false },
-      });
+    let newVersion;
+    try {
+      // Create version and package records in a transaction
+      newVersion = await db.$transaction(async (tx) => {
+        // Mark all existing versions as not latest
+        await tx.appVersion.updateMany({
+          where: { appId, isLatest: true },
+          data: { isLatest: false },
+        });
 
-      // Create the new version
-      const created = await tx.appVersion.create({
-        data: {
-          appId,
-          version: parsed.data.version,
-          changelog: parsed.data.changelog,
-          darFileKey,
-          darFileHash,
-          darFileSize: buffer.length,
-          mainPackageId: darMetadata.mainPackageId,
-          sdkVersion: darMetadata.sdkVersion,
-          isLatest: true,
-          packages: {
-            create: darMetadata.packages.map((pkg) => ({
-              packageId: pkg.packageId,
-              packageName: pkg.packageName,
-              lfVersion: pkg.lfVersion,
-            })),
+        // Create the new version
+        const created = await tx.appVersion.create({
+          data: {
+            appId,
+            version: parsed.data.version,
+            changelog: parsed.data.changelog,
+            darFileKey,
+            darFileHash,
+            darFileSize: buffer.length,
+            mainPackageId: darMetadata.mainPackageId,
+            sdkVersion: darMetadata.sdkVersion,
+            isLatest: true,
+            packages: {
+              create: darMetadata.packages.map((pkg) => ({
+                packageId: pkg.packageId,
+                packageName: pkg.packageName,
+                lfVersion: pkg.lfVersion,
+              })),
+            },
           },
-        },
-        include: {
-          packages: true,
-        },
-      });
+          include: {
+            packages: true,
+          },
+        });
 
-      return created;
-    });
+        return created;
+      });
+    } catch (error) {
+      // Clean up orphaned blob on transaction failure
+      try { await storage.delete(darFileKey); } catch {}
+      throw error;
+    }
 
     // Sync listing darHash if one exists
     const listing = await db.appListing.findUnique({

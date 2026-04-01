@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { createDeploymentSchema, paginationSchema } from "@/lib/validators";
 import { paginate, paginationMeta } from "@/lib/utils/pagination";
 import { startDeployment } from "@/lib/canton/deploy-orchestrator";
+import { checkDuplicateDeployment } from "@/lib/canton/deployment-guard";
 import { deployLimiter } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
@@ -117,39 +118,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check for an existing active deployment of the same version to this node
-    const existingDeployment = await db.deployment.findFirst({
-      where: {
-        nodeId,
-        versionId,
-        status: { in: ["PENDING", "UPLOADING", "VETTING", "VERIFYING", "COMPLETED"] },
-      },
-    });
-    if (existingDeployment) {
-      return NextResponse.json(
-        { error: "This version is already deployed or deploying to this node" },
-        { status: 409 }
-      );
-    }
-
-    // Create the deployment record
-    const deployment = await db.deployment.create({
-      data: {
-        nodeId,
-        versionId,
-        status: "PENDING",
-      },
-      include: {
-        node: { select: { id: true, name: true, host: true, port: true } },
-        version: {
-          select: {
-            id: true,
-            version: true,
-            app: { select: { id: true, name: true, slug: true } },
+    // Check + create atomically to prevent race conditions
+    let deployment;
+    try {
+      deployment = await db.$transaction(async (tx) => {
+        const existing = await checkDuplicateDeployment(nodeId, versionId, tx);
+        if (existing) throw new Error("DUPLICATE");
+        return tx.deployment.create({
+          data: { nodeId, versionId, status: "PENDING" },
+          include: {
+            node: { select: { id: true, name: true, host: true, port: true } },
+            version: {
+              select: {
+                id: true,
+                version: true,
+                app: { select: { id: true, name: true, slug: true } },
+              },
+            },
           },
-        },
-      },
-    });
+        });
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "DUPLICATE") {
+        return NextResponse.json(
+          { error: "This version is already deployed or deploying to this node" },
+          { status: 409 }
+        );
+      }
+      throw error;
+    }
 
     // Start the deployment asynchronously
     await startDeployment({

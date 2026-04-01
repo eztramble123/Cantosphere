@@ -74,7 +74,7 @@ export default async function AppDetailPage({ params }: Props) {
     },
   });
 
-  if (!app || (app.status !== "PUBLISHED" && app.developerId !== session?.user?.id)) {
+  if (!app || (app.status !== "PUBLISHED" && app.developerId !== session?.user?.id && session?.user?.role !== "ADMIN")) {
     notFound();
   }
 

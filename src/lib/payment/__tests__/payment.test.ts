@@ -27,17 +27,12 @@ vi.mock("@/lib/canton/party-resolution", () => ({
   resolvePartyId: vi.fn(),
 }));
 
-vi.mock("@/lib/licensing", () => ({
-  acquireLicense: vi.fn(),
-}));
 
 describe("purchaseWithCC", () => {
   let db: typeof import("@/lib/db").db;
   let isMockMode: () => boolean;
   let createContractServices: () => ReturnType<typeof import("@/lib/canton/contracts").createContractServices>;
   let resolvePartyId: (userId: string) => Promise<string>;
-  let acquireLicense: typeof import("@/lib/licensing").acquireLicense;
-
   const mockListing = {
     id: "listing-1",
     appId: "app-1",
@@ -70,9 +65,6 @@ describe("purchaseWithCC", () => {
 
     const partyMod = await import("@/lib/canton/party-resolution");
     resolvePartyId = partyMod.resolvePartyId as unknown as (userId: string) => Promise<string>;
-
-    const licenseMod = await import("@/lib/licensing");
-    acquireLicense = licenseMod.acquireLicense;
   });
 
   it("should purchase a ONE_TIME listing successfully on-chain", async () => {
@@ -119,16 +111,64 @@ describe("purchaseWithCC", () => {
     );
   });
 
-  it("should fall back to acquireLicense in mock mode", async () => {
+  it("should create license directly in mock mode (no acquireLicense)", async () => {
     vi.mocked(db.appListing.findUnique).mockResolvedValue(mockListing as never);
     vi.mocked(db.license.findUnique).mockResolvedValue(null);
     vi.mocked(isMockMode).mockReturnValue(true);
-    vi.mocked(acquireLicense).mockResolvedValue({ id: "license-mock" } as never);
+
+    const mockCreatedLicense = {
+      id: "license-mock",
+      listingId: "listing-1",
+      status: "ACTIVE",
+      paymentRef: "cc:mock",
+      listing: { app: { id: "app-1", name: "Test App", slug: "test-app" } },
+    };
+    vi.mocked(db.license.create).mockResolvedValue(mockCreatedLicense as never);
 
     const result = await purchaseWithCC("listing-1", "user-1");
 
-    expect(result).toEqual({ id: "license-mock" });
-    expect(acquireLicense).toHaveBeenCalledWith("listing-1", "user-1");
+    expect(result).toEqual(mockCreatedLicense);
+    expect(db.license.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          listingId: "listing-1",
+          licenseeId: "user-1",
+          pricingModel: "ONE_TIME",
+          status: "ACTIVE",
+          paymentRef: "cc:mock",
+        }),
+      })
+    );
+  });
+
+  it("should update existing license in mock mode when one exists", async () => {
+    vi.mocked(db.appListing.findUnique).mockResolvedValue(mockListing as never);
+    vi.mocked(db.license.findUnique).mockResolvedValue({
+      id: "existing-license",
+      status: "EXPIRED",
+    } as never);
+    vi.mocked(isMockMode).mockReturnValue(true);
+
+    const mockUpdatedLicense = {
+      id: "existing-license",
+      status: "ACTIVE",
+      paymentRef: "cc:mock",
+      listing: { app: { id: "app-1", name: "Test App", slug: "test-app" } },
+    };
+    vi.mocked(db.license.update).mockResolvedValue(mockUpdatedLicense as never);
+
+    const result = await purchaseWithCC("listing-1", "user-1");
+
+    expect(result).toEqual(mockUpdatedLicense);
+    expect(db.license.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "existing-license" },
+        data: expect.objectContaining({
+          status: "ACTIVE",
+          paymentRef: "cc:mock",
+        }),
+      })
+    );
   });
 
   it("should throw if listing not found", async () => {

@@ -25,6 +25,7 @@ interface UpdateListingInput {
   supportEmail?: string;
   supportUrl?: string;
   listingStatus?: ListingStatus;
+  description?: string;
 }
 
 /**
@@ -77,8 +78,8 @@ export async function createListing(
     },
   });
 
-  // Create on-chain listing contract (non-blocking, best-effort)
-  if (!isMockMode()) {
+  // Create on-chain listing contract only for listings that are immediately active
+  if (!isMockMode() && listing.listingStatus === "ACTIVE") {
     try {
       const contracts = createContractServices();
       const providerParty = await resolvePartyId(userId);
@@ -114,7 +115,20 @@ export async function updateListing(
 ) {
   const listing = await db.appListing.findUnique({
     where: { id: listingId },
-    select: { providerId: true, onChainContractId: true },
+    select: {
+      providerId: true,
+      appId: true,
+      onChainContractId: true,
+      listingStatus: true,
+      pricingModel: true,
+      priceAmount: true,
+      priceCurrency: true,
+      billingPeriodDays: true,
+      usageRate: true,
+      supportEmail: true,
+      supportUrl: true,
+      darHash: true,
+    },
   });
 
   if (!listing) throw new Error("Listing not found");
@@ -134,12 +148,45 @@ export async function updateListing(
     },
   });
 
+  // Create on-chain listing when transitioning to ACTIVE for the first time
+  if (
+    !isMockMode() &&
+    updates.listingStatus === "ACTIVE" &&
+    listing.listingStatus !== "ACTIVE" &&
+    !listing.onChainContractId
+  ) {
+    try {
+      const contracts = createContractServices();
+      const providerParty = await resolvePartyId(userId);
+      const app = await db.app.findUnique({
+        where: { id: listing.appId },
+        select: { name: true, description: true },
+      });
+      await contracts.listings.createOnChainListing(listingId, {
+        providerParty,
+        appId: listing.appId,
+        appName: app?.name ?? "",
+        description: app?.description ?? "",
+        darHash: listing.darHash,
+        pricingModel: listing.pricingModel,
+        priceAmount: listing.priceAmount?.toString(),
+        priceCurrency: listing.priceCurrency,
+        billingPeriodDays: listing.billingPeriodDays,
+        usageRate: listing.usageRate?.toString(),
+        supportEmail: listing.supportEmail,
+        supportUrl: listing.supportUrl,
+      });
+    } catch (error) {
+      console.error("[Canton] Failed to create on-chain listing on activation:", error);
+    }
+  }
+
   // Update on-chain listing contract (best-effort)
   if (!isMockMode() && listing.onChainContractId) {
     try {
       const contracts = createContractServices();
       await contracts.listings.updateOnChainListing(listing.onChainContractId, {
-        newDescription: updates.listingStatus !== undefined ? undefined : undefined,
+        newDescription: updates.description,
         newPricingModel: updates.pricingModel,
         newPriceAmount: updates.priceAmount?.toString(),
         newPriceCurrency: updates.priceCurrency,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
-import { PackageService } from "@/lib/canton/package-service";
+import { createPackageService } from "@/lib/canton/service-factory";
 
 export async function GET(
   _req: NextRequest,
@@ -25,7 +25,7 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const packageService = new PackageService({
+    const packageService = createPackageService({
       host: node.host,
       port: node.port,
       useTls: node.useTls,

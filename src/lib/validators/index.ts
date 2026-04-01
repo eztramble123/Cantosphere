@@ -124,7 +124,7 @@ export const paginationSchema = z.object({
 // ─── Admin Validators ────────────────────────────────────
 
 export const updateAppStatusSchema = z.object({
-  status: z.enum(["PUBLISHED", "REJECTED", "ARCHIVED"]),
+  status: z.enum(["DRAFT", "IN_REVIEW", "PUBLISHED", "REJECTED", "ARCHIVED"]),
   rejectionReason: z.string().max(1000).optional(),
 });
 

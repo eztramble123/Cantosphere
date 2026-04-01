@@ -83,6 +83,19 @@ export async function PUT(
       );
     }
 
+    // Pre-check name uniqueness to avoid 500 on unique constraint violation
+    if (parsed.data.name) {
+      const existing = await db.validatorNode.findUnique({
+        where: { ownerId_name: { ownerId: session.user.id, name: parsed.data.name } },
+      });
+      if (existing && existing.id !== nodeId) {
+        return NextResponse.json(
+          { error: "A node with this name already exists" },
+          { status: 409 }
+        );
+      }
+    }
+
     const updatedNode = await db.validatorNode.update({
       where: { id: nodeId },
       data: parsed.data,

@@ -45,14 +45,29 @@ export default async function AdminDashboardPage() {
     "use server";
     const appId = formData.get("appId") as string;
     const action = formData.get("action") as string;
-    const { db } = await import("@/lib/db");
+    const { cookies, headers } = await import("next/headers");
 
-    await db.app.update({
-      where: { id: appId },
-      data: {
-        status: action === "approve" ? "PUBLISHED" : "REJECTED",
+    const cookieStore = await cookies();
+    const headersList = await headers();
+
+    const status = action === "approve" ? "PUBLISHED" : "REJECTED";
+    const baseUrl = headersList.get("x-forwarded-proto") && headersList.get("host")
+      ? `${headersList.get("x-forwarded-proto")}://${headersList.get("host")}`
+      : "http://localhost:3000";
+
+    const res = await fetch(`${baseUrl}/api/admin/apps/${appId}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookieStore.toString(),
       },
+      body: JSON.stringify({ status }),
     });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to update app status");
+    }
 
     const { redirect } = await import("next/navigation");
     redirect("/admin");

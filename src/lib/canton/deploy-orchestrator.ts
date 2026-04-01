@@ -229,9 +229,10 @@ export class DeployOrchestrator {
       if (status === "COMPLETED") {
         const installation = await db.installation.upsert({
           where: {
-            userId_appId: {
+            userId_appId_nodeId: {
               userId: request.requesterId,
               appId: request.listing.appId,
+              nodeId: this.ctx.nodeId,
             },
           },
           create: {

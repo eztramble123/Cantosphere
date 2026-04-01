@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { startDeployment } from "@/lib/canton/deploy-orchestrator";
+import { checkDuplicateDeployment } from "@/lib/canton/deployment-guard";
 import { isMockMode } from "@/lib/canton/service-factory";
 import { createContractServices } from "@/lib/canton/contracts";
 
@@ -134,13 +135,18 @@ export async function PUT(
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
 
-      // Create deployment via existing pipeline
-      const deployment = await db.deployment.create({
-        data: {
-          nodeId: request.nodeId,
-          versionId: request.versionId,
-          status: "PENDING",
-        },
+      // Check + create atomically to prevent race conditions
+      const { deployment, isDuplicate } = await db.$transaction(async (tx) => {
+        const existing = await checkDuplicateDeployment(request.nodeId, request.versionId, tx);
+        if (existing) return { deployment: existing, isDuplicate: true };
+        const created = await tx.deployment.create({
+          data: {
+            nodeId: request.nodeId,
+            versionId: request.versionId,
+            status: "PENDING",
+          },
+        });
+        return { deployment: created, isDuplicate: false };
       });
 
       // Update install request to PROVISIONING with deployment link
@@ -152,22 +158,24 @@ export async function PUT(
         },
       });
 
-      // Start deployment asynchronously
-      await startDeployment({
-        deploymentId: deployment.id,
-        nodeId: request.nodeId,
-        nodeConfig: {
-          host: request.node.host,
-          port: request.node.port,
-          useTls: request.node.useTls,
-        },
-        synchronizerId: request.node.synchronizerId || undefined,
-        darFileKey: request.version.darFileKey,
-        darFileHash: request.version.darFileHash,
-        packageIds: request.version.packages.map((p) => p.packageId),
-        versionId: request.versionId,
-        installRequestId: requestId,
-      });
+      // Only start deployment for newly created ones
+      if (!isDuplicate) {
+        await startDeployment({
+          deploymentId: deployment.id,
+          nodeId: request.nodeId,
+          nodeConfig: {
+            host: request.node.host,
+            port: request.node.port,
+            useTls: request.node.useTls,
+          },
+          synchronizerId: request.node.synchronizerId || undefined,
+          darFileKey: request.version.darFileKey,
+          darFileHash: request.version.darFileHash,
+          packageIds: request.version.packages.map((p) => p.packageId),
+          versionId: request.versionId,
+          installRequestId: requestId,
+        });
+      }
 
       return NextResponse.json({ data: updated });
     }
